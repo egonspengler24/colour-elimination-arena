@@ -2,7 +2,7 @@
 
 Working title only — rename freely. Companion/spiritual successor to [`territory-plinko`](../territory-plinko/README.md) ("Plinko Conquest"): same foundation (static site, Matter.js, GitHub Pages), much more complex game loop. Directly inspired by the "marble race elimination" genre on YouTube (reference material below is from *Mega Team Elimination Marble Race #2* by MIKAN — used only for gameplay-mechanic inspiration, no assets/code reused).
 
-Status: **v1 implemented and playable** (`index.html` + `js/`). All 11 levels for the 12-colour build are in place and have been individually verified (physics, collection, elimination, bin ranking). Still open: per-level pacing/difficulty tuning (several levels currently finish much faster than Level 1), and the deferred items in §8 (music, colour customisation, speed controls). This document remains the source of truth for design intent — update it if implementation diverges.
+Status: **v1 deployed** at https://egonspengler24.github.io/colour-elimination-arena/ (repo: [egonspengler24/colour-elimination-arena](https://github.com/egonspengler24/colour-elimination-arena)). All 11 levels for the 12-colour build are in place, individually verified, and had a first pacing-tuning pass (Bubble Field, Gravity Wells, Twin-Row Gate, Horseshoe Cups, Hex Pachinko were finishing in seconds — gravity and obstacle density adjusted, though not all are fully matched to Level 1's pace yet). Still open: further pacing/difficulty tuning based on real playtesting, and the deferred items in §8 (music, colour customisation, speed controls). This document remains the source of truth for design intent — update it if implementation diverges.
 
 ---
 
