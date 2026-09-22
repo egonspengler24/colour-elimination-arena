@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Colour Elimination Arena</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="game-frame">
+      <div id="leg-title">LEG 1</div>
+      <canvas id="field" width="1600" height="900"></canvas>
+
+      <div id="start-overlay">
+        <button id="start-btn">Start</button>
+      </div>
+
+      <div id="winner-overlay" class="hidden">
+        <div id="winner-text"></div>
+      </div>
+
+      <div id="controls">
+        <button id="pause-btn" title="Pause">&#10074;&#10074;</button>
+        <button id="fullscreen-btn" title="Fullscreen">&#9974;</button>
+      </div>
+    </div>
+
+    <div id="bins"></div>
+  </div>
+
+  <audio id="bg-music" loop></audio>
+
+  <script src="vendor/matter.min.js"></script>
+  <script src="js/palette.js"></script>
+  <script src="js/bins.js"></script>
+  <script src="js/levels.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>
