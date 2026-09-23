@@ -13,6 +13,8 @@ class Bins {
     this.allocation = 0;
     this.eliminated = new Set();
     this.eliminationOrder = [];
+    this.completedSeq = {};
+    this.seq = 0;
 
     for (const colour of palette) {
       const el = document.createElement('div');
@@ -31,6 +33,8 @@ class Bins {
 
   startLeg(activeIds, allocation) {
     this.allocation = allocation;
+    this.completedSeq = {};
+    this.seq = 0;
     for (const id of activeIds) {
       this.counts[id] = 0;
       const el = this.els[id];
@@ -50,7 +54,10 @@ class Bins {
     const pct = (this.counts[id] / this.allocation) * 100;
     el.querySelector('.bin-fill').style.height = `${pct}%`;
     el.querySelector('.bin-count').textContent = String(this.counts[id]);
-    if (this.counts[id] >= this.allocation) el.classList.add('complete');
+    if (this.counts[id] >= this.allocation) {
+      el.classList.add('complete');
+      if (this.completedSeq[id] === undefined) this.completedSeq[id] = ++this.seq;
+    }
     this._reorder(this._activeIds());
   }
 

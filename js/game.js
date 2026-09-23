@@ -7,7 +7,8 @@ const STALL_MS = 8000;
 const SPAWN_PER_FRAME = 25;
 const MAX_BALL_SPEED = 22; // safety clamp: attractor/repulsor fields with little
                             // damping can otherwise pump velocity without bound
-const PHYSICS_SUBSTEPS = 4;
+const MAX_SINGLE_STEP_MS = 25; // frames longer than this get split into several steps
+const MAX_PHYSICS_STEPS = 3;
 
 const canvas = document.getElementById('field');
 const ctx = canvas.getContext('2d');
@@ -235,10 +236,17 @@ function checkStall(now) {
 
 function checkLegEnd() {
   if (transitioning || activeColours.length <= 1) return;
-  const completeIds = activeColours.filter((id) => bins.isComplete(id));
-  if (completeIds.length === activeColours.length - 1) {
+  const incomplete = activeColours.filter((id) => !bins.isComplete(id));
+  // Normally exactly one colour is still short when the leg ends. But the
+  // last colours can also finish in the same frame (dense waves of balls, as
+  // in the vortex), leaving nobody incomplete — previously that meant no
+  // loser was ever found and the game hung forever. In that case the colour
+  // that finished last is the one eliminated.
+  if (incomplete.length <= 1) {
     transitioning = true;
-    const loserId = activeColours.find((id) => !bins.isComplete(id));
+    const loserId = incomplete.length === 1
+      ? incomplete[0]
+      : activeColours.reduce((a, b) => (bins.completedSeq[b] > bins.completedSeq[a] ? b : a));
     for (const b of balls) Matter.World.remove(world, b);
     balls = [];
     spawnQueue = [];
@@ -310,21 +318,17 @@ function loop(now) {
 
   if (started && !paused && !gameOver) {
     if (spawnQueue.length > 0) spawnBatch();
-    // Sub-step the physics AND the level's own wall movement together.
-    // Moving the walls once per animation frame, then resolving physics
-    // against that single static pose, meant a fast-moving wall (e.g. a
-    // rotating flap) effectively teleported a whole frame's worth of
-    // motion before any collision was resolved at the new position —
-    // Matter would detect a ball deeply overlapping the wall's new pose
-    // and fire off a large corrective impulse, launching it at extreme
-    // speed. Advancing the wall by a fraction of the frame on each substep
-    // keeps its motion — and any resulting collision — proportionally
-    // small everywhere, not just where the physics substeps alone helped.
-    const subDt = dt / PHYSICS_SUBSTEPS;
+    // One engine step per frame at normal frame rates. Only a genuinely long
+    // frame (a hitch, or a slow machine) is split into several steps of
+    // roughly 16ms so the physics stays stable. Level walls advance in
+    // lockstep with each step. (This used to always run 4 substeps, which
+    // quadrupled the physics cost on every level for no real benefit — the
+    // bug it was added for turned out to be the stall-jitter force.)
+    const steps = dt > MAX_SINGLE_STEP_MS ? Math.min(MAX_PHYSICS_STEPS, Math.ceil(dt / 16.67)) : 1;
+    const subDt = dt / steps;
     const elapsedBefore = now - legStartTime - dt;
-    for (let s = 1; s <= PHYSICS_SUBSTEPS; s++) {
-      const subElapsed = elapsedBefore + subDt * s;
-      if (currentLevelRuntime) currentLevelRuntime.update(subElapsed);
+    for (let s = 1; s <= steps; s++) {
+      if (currentLevelRuntime) currentLevelRuntime.update(elapsedBefore + subDt * s);
       applyFields(now);
       Matter.Engine.update(engine, subDt);
       clampSpeeds();
