@@ -36,7 +36,7 @@ function drawRect(ctx, body, fill) {
 }
 
 function makePegField(Matter, world, { xStart, xEnd, yStart, rows, rowGap, radius, cols }) {
-  const bodies = [];
+  const pegs = [];
   const cellW = (xEnd - xStart) / cols;
   for (let r = 0; r < rows; r++) {
     const y = yStart + r * rowGap;
@@ -46,18 +46,46 @@ function makePegField(Matter, world, { xStart, xEnd, yStart, rows, rowGap, radiu
       if (x < xStart - 1 || x > xEnd + 1) continue;
       const peg = Matter.Bodies.circle(x, y, radius, { isStatic: true });
       Matter.World.add(world, peg);
-      bodies.push(peg);
+      peg.baseX = x; peg.baseY = y; peg.row = r; peg.col = c;
+      pegs.push(peg);
     }
   }
-  return bodies;
+  return pegs;
 }
 
-function drawPegs(ctx, bodies, fill) {
+function drawPegs(ctx, pegs, fill) {
   ctx.fillStyle = fill;
-  for (const b of bodies) {
+  for (const b of pegs) {
     ctx.beginPath();
     ctx.arc(b.position.x, b.position.y, b.circleRadius, 0, Math.PI * 2);
     ctx.fill();
+  }
+}
+
+// Very gentle continuous side-to-side drift, per-peg phase offset so
+// neighbours don't all move in lockstep (that stops balls settling into a
+// stable resting spot on a peg, which was causing long run times).
+function wobblePegsX(Matter, pegs, t, amplitude, period, phaseStep = 0.35) {
+  for (let i = 0; i < pegs.length; i++) {
+    const p = pegs[i];
+    const dx = Math.sin(t / period + i * phaseStep) * amplitude;
+    Matter.Body.setPosition(p, { x: p.baseX + dx, y: p.baseY });
+  }
+}
+
+// Rotates a rigid group of parts together around a shared pivot. Each part
+// keeps a fixed offset/angle relative to the pivot at angle=0 ("rest pose");
+// rotating the whole group by `angle` recomputes each part's position/angle
+// from that rest pose. Used for anything that should tip/rotate as one piece
+// (a V-funnel, a cup) rather than each wall moving independently.
+function rotateRigidGroup(Matter, parts, pivot, angle) {
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  for (const p of parts) {
+    const { x: ox, y: oy } = p.restOffset;
+    const nx = ox * cos - oy * sin;
+    const ny = ox * sin + oy * cos;
+    Matter.Body.setPosition(p.body, { x: pivot.x + nx, y: pivot.y + ny });
+    Matter.Body.setAngle(p.body, p.restAngle + angle);
   }
 }
 
@@ -68,6 +96,7 @@ const WALL_BLUE = '#2f6fb0';
 // travelling gap. Segments carry a tiny (~1deg) alternating tilt so balls
 // landing on a flat top get nudged sideways instead of bouncing straight up
 // and down forever (this was a real problem in the first playtest).
+// Feedback: works well, no changes.
 
 function buildRisingPillars(Matter, world, W, H) {
   const playTop = H * 0.09;
@@ -120,72 +149,94 @@ function buildRisingPillars(Matter, world, W, H) {
 }
 
 // ---- Level 2: Bubble Field -------------------------------------------------
-// Static dense peg mesh, pachinko-style. No motion needed.
+// Feedback: balls were resting on top of pegs (long run times) — pegs now
+// drift gently side to side so nothing stays put.
 
 function buildBubbleField(Matter, world, W, H) {
   const pegs = makePegField(Matter, world, {
     xStart: W * 0.02, xEnd: W * 0.98, yStart: H * 0.1,
     rows: 8, rowGap: H * 0.09, radius: 33, cols: 12,
   });
-  function update() {}
+  function update(t) { wobblePegsX(Matter, pegs, t, 12, 1900); }
   function draw(ctx) { drawPegs(ctx, pegs, WALL_BLUE); }
   return { update, draw, bodies: pegs };
 }
 
 // ---- Level 3: Serpentine Chambers ------------------------------------------
-// Zigzag of tilted shelves, each leaving a gap at alternating ends, forcing a
-// snaking path down to a single localized exit (not full-width).
+// Feedback: original didn't read as a serpentine path (balls just looked
+// like they fell straight down the middle) and was slow. Reworked: each
+// half-width shelf now pivots/rotates around its own centre through a wide
+// sweep, so the "closed" and "open" halves keep swapping — a much clearer
+// left-right-left path — and collection is now the full-width line rather
+// than a small circle (matches how it actually reads visually).
 
 function buildSerpentine(Matter, world, W, H) {
-  // Each shelf covers exactly one half of the width (closed side) and leaves
-  // the other half fully open (the gap), alternating per row. Half-width
-  // shelves at a modest tilt keep enough vertical clearance between rows
-  // that adjacent shelves never cross each other (an earlier version used
-  // wide overlapping diagonals and balls got wedged at the intersections).
-  const shelves = [];
+  // Each shelf is a single rigid body pivoting around its own (fixed)
+  // centre — Body.setAngle rotates in place around the current position, so
+  // no translation bookkeeping is needed here.
+  const rows = [];
   const n = 4;
-  const tiltDeg = 10;
+  const w = W * 0.56;
   const topY = H * 0.14, botY = H * 0.8;
   for (let i = 0; i < n; i++) {
     const y = topY + (i / (n - 1)) * (botY - topY);
     const openRight = i % 2 === 0;
-    const w = W * 0.56;
     const cx = openRight ? W * 0.22 : W * 0.78;
-    const angle = ((openRight ? 1 : -1) * tiltDeg * Math.PI) / 180;
-    const shelf = makeRect(Matter, world, cx, y, w, 14, { angle });
-    shelves.push(shelf);
+    const body = makeRect(Matter, world, cx, y, w, 14);
+    rows.push({
+      body,
+      baseAngle: ((openRight ? 1 : -1) * 10 * Math.PI) / 180,
+      sweep: ((openRight ? -1 : 1) * 34 * Math.PI) / 180,
+      period: 5200 + i * 400,
+      phase: i * 1.1,
+    });
   }
-  function update() {}
-  function draw(ctx) { for (const s of shelves) drawRect(ctx, s, WALL_BLUE); }
-  return { update, draw, bodies: shelves };
+  function update(t) {
+    for (const r of rows) {
+      const angle = r.baseAngle + r.sweep * (0.5 + 0.5 * Math.sin(t / r.period + r.phase));
+      Matter.Body.setAngle(r.body, angle);
+    }
+  }
+  function draw(ctx) { for (const r of rows) drawRect(ctx, r.body, WALL_BLUE); }
+  return { update, draw, bodies: rows.map((r) => r.body) };
 }
 
 // ---- Level 4: Vortex Well ---------------------------------------------------
-// One attractor with a tangential component pulls balls into a spiral toward
-// its centre, which is also the collection point. Near-zero baseline gravity.
+// Feedback: occasional gravity made it look wrong, and the drawn ring wasn't
+// explained by anything. Reworked: zero gravity (motion is purely the
+// field), the field now pulses between attract and repel (keeps things
+// churning rather than settling into one static spiral), the collector sits
+// at true centre, and the ring is now a functional readout of the current
+// attract/repel state (blue = pulling in, orange = pushing out) instead of
+// an unexplained decoration.
 
 function buildVortex(Matter, world, W, H) {
-  const cx = W * 0.58, cy = H * 0.5;
+  const cx = W * 0.5, cy = H * 0.5;
   const field = { x: cx, y: cy, kind: 'attract', strength: 0.00012, radius: Math.hypot(W, H), tangential: 0.00018 };
-  function update() {}
+  const cycle = 6200, attractFor = 4400;
+  function update(t) {
+    field.kind = t % cycle < attractFor ? 'attract' : 'repel';
+  }
   function draw(ctx) {
-    ctx.strokeStyle = 'rgba(90,150,220,0.5)';
+    ctx.strokeStyle = field.kind === 'attract' ? 'rgba(90,150,220,0.55)' : 'rgba(230,140,60,0.55)';
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.arc(cx, cy, Math.min(W, H) * 0.45, 0, Math.PI * 2);
+    ctx.arc(cx, cy, Math.min(W, H) * 0.16, 0, Math.PI * 2);
     ctx.stroke();
   }
   return { update, draw, bodies: [], fields: [field] };
 }
 
 // ---- Level 5: Gravity Wells --------------------------------------------------
-// Multiple attractor orbs create slingshot arcs on the way down.
+// Feedback: finished too fast — reduced to near-zero gravity so the
+// attractor fields do almost all of the work (a small residual keeps balls
+// that spawn between wells from settling into a permanent stable orbit).
 
 function buildGravityWells(Matter, world, W, H) {
   const positions = [0.14, 0.3, 0.46, 0.62, 0.78, 0.92];
   const fields = positions.map((fx, i) => ({
     x: W * fx, y: H * (0.28 + (i % 3) * 0.16), kind: 'attract',
-    strength: 0.00009, radius: 150, tangential: 0.00003,
+    strength: 0.00005, radius: 150, tangential: 0.00001,
   }));
   function update() {}
   function draw(ctx) {
@@ -200,44 +251,71 @@ function buildGravityWells(Matter, world, W, H) {
 }
 
 // ---- Level 6: Diamond Funnel -------------------------------------------------
-// A wide V of angled walls funnels balls toward bottom-centre, with a
-// scattering of small diagonal bars above for extra deflection texture.
+// Feedback: overlapping decorative bars looked wrong, and the closed V vertex
+// trapped every ball (needing the stall jitter to clear it every time).
+// Reworked: just a clean V (decorative bars removed), a small permanent gap
+// at the vertex so balls always have somewhere to drain, and the whole V now
+// rocks slowly side to side around the vertex to actively spill balls
+// through rather than relying on the gap alone.
 
 function buildDiamondFunnel(Matter, world, W, H) {
-  const bodies = [];
-  const left = makeRect(Matter, world, W * 0.27, H * 0.5, W * 0.62, 16, { angle: (28 * Math.PI) / 180 });
-  const right = makeRect(Matter, world, W * 0.73, H * 0.5, W * 0.62, 16, { angle: (-28 * Math.PI) / 180 });
-  bodies.push(left, right);
+  const apex = { x: W * 0.5, y: H * 0.58 };
+  const armLen = W * 0.42;
+  const gapHalf = 20;
+  const baseAngle = (32 * Math.PI) / 180;
+  const radius = armLen / 2 + gapHalf;
 
-  const bars = [];
-  for (let i = 0; i < 10; i++) {
-    const x = W * (0.1 + Math.random() * 0.8);
-    const y = H * (0.14 + Math.random() * 0.18);
-    const angle = ((Math.random() < 0.5 ? 1 : -1) * 40 * Math.PI) / 180;
-    bars.push(makeRect(Matter, world, x, y, W * 0.11, 10, { angle }));
+  function armPose(sign, wobble) {
+    const theta = sign * baseAngle + wobble;
+    const dir = { x: Math.sin(theta), y: -Math.cos(theta) };
+    return { x: dir.x * radius, y: dir.y * radius, angle: Math.atan2(dir.y, dir.x) };
   }
-  bodies.push(...bars);
 
-  function update() {}
-  function draw(ctx) { for (const b of bodies) drawRect(ctx, b, WALL_BLUE); }
-  return { update, draw, bodies };
+  const leftBody = makeRect(Matter, world, apex.x, apex.y, armLen, 16);
+  const rightBody = makeRect(Matter, world, apex.x, apex.y, armLen, 16);
+  const parts = [
+    { body: leftBody, restOffset: { x: 0, y: 0 }, restAngle: 0, sign: -1 },
+    { body: rightBody, restOffset: { x: 0, y: 0 }, restAngle: 0, sign: 1 },
+  ];
+
+  function update(t) {
+    const wobble = Math.sin(t / 2800) * 0.16;
+    for (const p of parts) {
+      const pose = armPose(p.sign, wobble);
+      Matter.Body.setPosition(p.body, { x: apex.x + pose.x, y: apex.y + pose.y });
+      Matter.Body.setAngle(p.body, pose.angle);
+    }
+  }
+
+  function draw(ctx) { drawRect(ctx, leftBody, WALL_BLUE); drawRect(ctx, rightBody, WALL_BLUE); }
+  return { update, draw, bodies: [leftBody, rightBody] };
 }
 
 // ---- Level 7: Twin-Row Gate --------------------------------------------------
-// Two rows of large circular gaps.
+// Feedback: read as a repeat of the other peg-field levels and wasn't doing
+// enough. Reworked to lean into "gate": just two rows of a few large pegs,
+// each row sliding as a block in opposite directions (a shifting scissor
+// gate) rather than a dense static mesh — visually distinct from Levels 2
+// and 10, and the large obvious motion should stop balls getting stuck too.
 
 function buildTwinRowGate(Matter, world, W, H) {
   const pegs = makePegField(Matter, world, {
     xStart: W * 0.02, xEnd: W * 0.98, yStart: H * 0.16,
-    rows: 4, rowGap: H * 0.15, radius: 52, cols: 8,
+    rows: 5, rowGap: H * 0.14, radius: 50, cols: 8,
   });
-  function update() {}
+  function update(t) {
+    for (const p of pegs) {
+      const dir = p.row % 2 === 0 ? 1 : -1;
+      const dx = Math.sin(t / 2400) * 55 * dir;
+      Matter.Body.setPosition(p, { x: p.baseX + dx, y: p.baseY });
+    }
+  }
   function draw(ctx) { drawPegs(ctx, pegs, WALL_BLUE); }
   return { update, draw, bodies: pegs };
 }
 
 // ---- Level 8: Sieve Shelves --------------------------------------------------
-// Three rows of gapped horizontal shelves; gaps drift slowly side to side.
+// Feedback: works well; make the shelf motion more obvious.
 
 function buildSieveShelves(Matter, world, W, H) {
   const rows = [];
@@ -252,11 +330,11 @@ function buildSieveShelves(Matter, world, W, H) {
       const seg = makeRect(Matter, world, baseX, y, segW, 14);
       segs.push({ body: seg, baseX });
     }
-    rows.push({ segs, phase: r * 1.3, amp: W / segCount / 2 - 4 });
+    rows.push({ segs, phase: r * 1.3, amp: W / segCount / 2 + 10 });
   }
   function update(t) {
     for (const row of rows) {
-      const dx = Math.sin(t / 2600 + row.phase) * row.amp;
+      const dx = Math.sin(t / 1900 + row.phase) * row.amp;
       for (const s of row.segs) Matter.Body.setPosition(s.body, { x: s.baseX + dx, y: s.body.position.y });
     }
   }
@@ -265,17 +343,26 @@ function buildSieveShelves(Matter, world, W, H) {
 }
 
 // ---- Level 9: Horseshoe Cups --------------------------------------------------
-// Two staggered rows of shallow U-shaped catch bumpers with a slight tilt on
-// the base so balls always eventually roll out rather than settling forever.
+// Feedback: cups held balls forever and the geometry looked wrong (walls
+// weren't cleanly perpendicular to the base as one rigid piece). Reworked:
+// each cup is a proper 90-degree U (base + two perpendicular walls) built as
+// one rigid group around a pivot, and the whole cup now slowly rotates well
+// past horizontal on a long cycle — spilling whatever it's holding — before
+// swinging back to catch again.
 
 function buildHorseshoeCups(Matter, world, W, H) {
-  const bodies = [];
   const cupW = 90, wallH = 46, baseH = 12;
-  function makeCup(cx, cy, dir) {
-    const base = makeRect(Matter, world, cx, cy + wallH / 2, cupW, baseH, { angle: (dir * 3 * Math.PI) / 180 });
-    const l = makeRect(Matter, world, cx - cupW / 2, cy, 12, wallH);
-    const r = makeRect(Matter, world, cx + cupW / 2, cy, 12, wallH);
-    bodies.push(base, l, r);
+  const cups = [];
+  function makeCup(cx, cy, phase) {
+    const base = makeRect(Matter, world, cx, cy, cupW, baseH);
+    const l = makeRect(Matter, world, cx, cy, 12, wallH);
+    const r = makeRect(Matter, world, cx, cy, 12, wallH);
+    const parts = [
+      { body: base, restOffset: { x: 0, y: wallH / 2 }, restAngle: 0 },
+      { body: l, restOffset: { x: -cupW / 2, y: 0 }, restAngle: 0 },
+      { body: r, restOffset: { x: cupW / 2, y: 0 }, restAngle: 0 },
+    ];
+    cups.push({ pivot: { x: cx, y: cy }, parts, phase });
   }
   const rowYs = [H * 0.22, H * 0.42, H * 0.62, H * 0.82];
   rowYs.forEach((y, ri) => {
@@ -284,23 +371,28 @@ function buildHorseshoeCups(Matter, world, W, H) {
       const stagger = (ri % 2) * (W / cols / 2);
       const x = stagger + (c + 0.5) * (W / cols);
       if (x < 40 || x > W - 40) continue;
-      makeCup(x, y, c % 2 === 0 ? 1 : -1);
+      makeCup(x, y, (ri * cols + c) * 0.7);
     }
   });
-  function update() {}
-  function draw(ctx) { for (const b of bodies) drawRect(ctx, b, WALL_BLUE); }
-  return { update, draw, bodies };
+  function update(t) {
+    for (const cup of cups) {
+      const angle = ((105 * Math.PI) / 180) * Math.sin(t / 5200 + cup.phase);
+      rotateRigidGroup(Matter, cup.parts, cup.pivot, angle);
+    }
+  }
+  function draw(ctx) { for (const cup of cups) for (const p of cup.parts) drawRect(ctx, p.body, WALL_BLUE); }
+  return { update, draw, bodies: cups.flatMap((c) => c.parts.map((p) => p.body)) };
 }
 
 // ---- Level 10: Hex Pachinko --------------------------------------------------
-// Denser, smaller-pitch peg field than Level 2.
+// Feedback: fine, but a slight drift would stop smaller balls getting stuck.
 
 function buildHexPachinko(Matter, world, W, H) {
   const pegs = makePegField(Matter, world, {
     xStart: W * 0.02, xEnd: W * 0.98, yStart: H * 0.1,
     rows: 11, rowGap: H * 0.068, radius: 15, cols: 18,
   });
-  function update() {}
+  function update(t) { wobblePegsX(Matter, pegs, t, 7, 1500); }
   function draw(ctx) { drawPegs(ctx, pegs, WALL_BLUE); }
   return { update, draw, bodies: pegs };
 }
@@ -336,47 +428,49 @@ function buildRepulsorChaos(Matter, world, W, H) {
 }
 
 // ---- registry ---------------------------------------------------------------
+// Collection lines sit close to the bottom edge (0.93H) so the green zone
+// reads as immediately on top of the bins below, per feedback.
 
 const LEVELS = [
   { id: 'rising-pillars', name: 'Rising Pillars', background: '#050505',
     gravity: { x: 0, y: 1 }, release: { type: 'spread', y: 0.05 },
-    collection: { type: 'line', y: 0.85 }, build: buildRisingPillars },
+    collection: { type: 'line', y: 0.93 }, build: buildRisingPillars },
 
   { id: 'bubble-field', name: 'Bubble Field', background: '#04060a',
     gravity: { x: 0, y: 0.16 }, release: { type: 'spread', y: 0.05 },
-    collection: { type: 'line', y: 0.9 }, build: buildBubbleField },
+    collection: { type: 'line', y: 0.93 }, build: buildBubbleField },
 
   { id: 'serpentine-chambers', name: 'Serpentine Chambers', background: '#050505',
     gravity: { x: 0, y: 1 }, release: { type: 'spread', y: 0.04 },
-    collection: { type: 'circle', x: 0.5, y: 0.9, r: 0.1 }, build: buildSerpentine },
+    collection: { type: 'line', y: 0.93 }, build: buildSerpentine },
 
   { id: 'vortex-well', name: 'Vortex Well', background: '#03040a',
-    gravity: { x: 0, y: 0.05 }, release: { type: 'point', x: 0.06, y: 0.5 },
-    collection: { type: 'circle', x: 0.58, y: 0.5, r: 0.045 }, build: buildVortex },
+    gravity: { x: 0, y: 0 }, release: { type: 'point', x: 0.06, y: 0.5 },
+    collection: { type: 'circle', x: 0.5, y: 0.5, r: 0.045 }, build: buildVortex },
 
   { id: 'gravity-wells', name: 'Gravity Wells', background: '#0a0806',
-    gravity: { x: 0, y: 0.2 }, release: { type: 'spread', y: 0.04 },
-    collection: { type: 'line', y: 0.92 }, build: buildGravityWells },
+    gravity: { x: 0, y: 0.015 }, release: { type: 'spread', y: 0.04 },
+    collection: { type: 'line', y: 0.93 }, build: buildGravityWells },
 
   { id: 'diamond-funnel', name: 'Diamond Funnel', background: '#050505',
     gravity: { x: 0, y: 1 }, release: { type: 'spread', xMin: 0.35, xMax: 0.65, y: 0.04 },
-    collection: { type: 'line', y: 0.92 }, build: buildDiamondFunnel },
+    collection: { type: 'line', y: 0.93 }, build: buildDiamondFunnel },
 
   { id: 'twin-row-gate', name: 'Twin-Row Gate', background: '#04060a',
-    gravity: { x: 0, y: 0.18 }, release: { type: 'spread', y: 0.05 },
-    collection: { type: 'line', y: 0.92 }, build: buildTwinRowGate },
+    gravity: { x: 0, y: 0.13 }, release: { type: 'spread', y: 0.05 },
+    collection: { type: 'line', y: 0.93 }, build: buildTwinRowGate },
 
   { id: 'sieve-shelves', name: 'Sieve Shelves', background: '#050505',
     gravity: { x: 0, y: 1 }, release: { type: 'spread', y: 0.04 },
-    collection: { type: 'line', y: 0.9 }, build: buildSieveShelves },
+    collection: { type: 'line', y: 0.93 }, build: buildSieveShelves },
 
   { id: 'horseshoe-cups', name: 'Horseshoe Cups', background: '#04060a',
-    gravity: { x: 0, y: 0.16 }, release: { type: 'spread', y: 0.04 },
-    collection: { type: 'line', y: 0.9 }, build: buildHorseshoeCups },
+    gravity: { x: 0, y: 0.6 }, release: { type: 'spread', y: 0.04 },
+    collection: { type: 'line', y: 0.93 }, build: buildHorseshoeCups },
 
   { id: 'hex-pachinko', name: 'Hex Pachinko', background: '#050505',
     gravity: { x: 0, y: 0.14 }, release: { type: 'spread', y: 0.04 },
-    collection: { type: 'line', y: 0.9 }, build: buildHexPachinko },
+    collection: { type: 'line', y: 0.93 }, build: buildHexPachinko },
 
   { id: 'repulsor-chaos', name: 'Repulsor Chaos', background: '#03040a',
     gravity: { x: 0, y: 0.25 }, release: { type: 'spread', xMin: 0, xMax: 0.3, y: 0.06 },
