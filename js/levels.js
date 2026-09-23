@@ -163,41 +163,81 @@ function buildBubbleField(Matter, world, W, H) {
 }
 
 // ---- Level 3: Serpentine Chambers ------------------------------------------
-// Feedback: original didn't read as a serpentine path (balls just looked
-// like they fell straight down the middle) and was slow. Reworked: each
-// half-width shelf now pivots/rotates around its own centre through a wide
-// sweep, so the "closed" and "open" halves keep swapping — a much clearer
-// left-right-left path — and collection is now the full-width line rather
-// than a small circle (matches how it actually reads visually).
+// Feedback (round 2): the free-pivoting version rotated each shelf around
+// its own centre, so the far end could swing far enough to pass *below* the
+// collection line — a wall below the floor, which doesn't make sense — and
+// balls pushed out past the canvas edge by that swing got picked up by the
+// out-of-bounds safety net and teleported back to the release point, which
+// read as "balls regenerating at the top" rather than falling through a
+// real path. A ball resting close to a free pivot's centre also barely
+// moves as it rotates, which looked like balls freezing.
+//
+// Reworked as hinged flaps: each shelf is anchored at a FIXED point on the
+// canvas edge (like a door hinge) and only its far tip swings, always
+// rising above the hinge's own height — so the tip can never dip below its
+// own row, the collection line, or off-canvas. The far side of the row is
+// always open at that height (a permanent bypass), and the flap's reach
+// pulses to vary how much of the near side it covers.
 
 function buildSerpentine(Matter, world, W, H) {
-  // Each shelf is a single rigid body pivoting around its own (fixed)
-  // centre — Body.setAngle rotates in place around the current position, so
-  // no translation bookkeeping is needed here.
+  // thetaMax is capped per row so the tip's rise (sin(theta)*L) can never
+  // exceed that row's own distance from the canvas top, minus a safety
+  // margin — a fixed thetaMax for every row (the previous version) let the
+  // top rows' tips swing clean off the top of the canvas, since they have
+  // less headroom than the lower rows. Any ball caught near the tip when
+  // that happened got carried up and out with it.
   const rows = [];
   const n = 4;
-  const w = W * 0.56;
-  const topY = H * 0.14, botY = H * 0.8;
+  const L = W * 0.32;
+  const topY = H * 0.16, botY = H * 0.78;
+  const SAFETY = 50;
+  // Both bounds are clamped against the same per-row safe angle — clamping
+  // only thetaMax (an earlier version) left thetaMin free to violate safety
+  // once it was raised above a row's own safe cap, which happened for the
+  // topmost row here and put its tip above the canvas at every angle.
+  const desiredThetaMin = (20 * Math.PI) / 180;
+  const desiredThetaMax = (58 * Math.PI) / 180;
+  const hingeInset = 30; // keep the hinge off the exact edge so a near-flat
+                          // flap can't form a dead pocket against the side wall
   for (let i = 0; i < n; i++) {
-    const y = topY + (i / (n - 1)) * (botY - topY);
-    const openRight = i % 2 === 0;
-    const cx = openRight ? W * 0.22 : W * 0.78;
-    const body = makeRect(Matter, world, cx, y, w, 14);
+    const hy = topY + (i / (n - 1)) * (botY - topY);
+    const hingeLeft = i % 2 === 0;
+    const hx = hingeLeft ? hingeInset : W - hingeInset;
+    const maxSafeSin = Math.min(1, Math.max(0.05, (hy - SAFETY) / L));
+    const safeCap = Math.asin(maxSafeSin);
+    const thetaMin = Math.min(desiredThetaMin, safeCap);
+    const thetaMax = Math.min(desiredThetaMax, safeCap);
     rows.push({
-      body,
-      baseAngle: ((openRight ? 1 : -1) * 10 * Math.PI) / 180,
-      sweep: ((openRight ? -1 : 1) * 34 * Math.PI) / 180,
-      period: 5200 + i * 400,
-      phase: i * 1.1,
+      hx,
+      hy,
+      dirX: hingeLeft ? 1 : -1,
+      L,
+      thetaMin,
+      thetaMax: Math.max(thetaMin, thetaMax),
+      period: 4600 + i * 500,
+      phase: i * 1.3,
+      body: makeRect(Matter, world, hx + (hingeLeft ? 1 : -1) * L / 2, hy, L, 14),
     });
   }
+  function poseFor(row, theta) {
+    const tipX = row.hx + row.dirX * Math.cos(theta) * row.L;
+    const tipY = row.hy - Math.sin(theta) * row.L;
+    return {
+      cx: (row.hx + tipX) / 2,
+      cy: (row.hy + tipY) / 2,
+      angle: Math.atan2(tipY - row.hy, tipX - row.hx),
+    };
+  }
   function update(t) {
-    for (const r of rows) {
-      const angle = r.baseAngle + r.sweep * (0.5 + 0.5 * Math.sin(t / r.period + r.phase));
-      Matter.Body.setAngle(r.body, angle);
+    for (const row of rows) {
+      const k = (Math.sin(t / row.period + row.phase) + 1) / 2;
+      const theta = row.thetaMin + k * (row.thetaMax - row.thetaMin);
+      const pose = poseFor(row, theta);
+      Matter.Body.setPosition(row.body, { x: pose.cx, y: pose.cy });
+      Matter.Body.setAngle(row.body, pose.angle);
     }
   }
-  function draw(ctx) { for (const r of rows) drawRect(ctx, r.body, WALL_BLUE); }
+  function draw(ctx) { for (const row of rows) drawRect(ctx, row.body, WALL_BLUE); }
   return { update, draw, bodies: rows.map((r) => r.body) };
 }
 

@@ -7,6 +7,7 @@ const STALL_MS = 8000;
 const SPAWN_PER_FRAME = 25;
 const MAX_BALL_SPEED = 22; // safety clamp: attractor/repulsor fields with little
                             // damping can otherwise pump velocity without bound
+const PHYSICS_SUBSTEPS = 4;
 
 const canvas = document.getElementById('field');
 const ctx = canvas.getContext('2d');
@@ -30,6 +31,19 @@ const bins = new Bins(binsContainer, palette);
 const engine = Matter.Engine.create({ enableSleeping: false });
 const world = engine.world;
 const BALL_GROUP = -1;
+
+// Permanent invisible side walls. Without these, any ball that picks up
+// lateral drift (e.g. bounced off an angled wall) just keeps drifting until
+// it exits the canvas — and the only thing waiting for it was the
+// out-of-bounds safety net, teleporting it back to the release point. That
+// was firing thousands of times a leg on some levels, which read as balls
+// "regenerating at the top" rather than a rare fallback. Real walls mean
+// balls simply bounce back in, and recycling stays a true last resort.
+const WALL_MARGIN = 250;
+Matter.World.add(world, [
+  Matter.Bodies.rectangle(-WALL_MARGIN, H / 2, WALL_MARGIN * 2, H * 4, { isStatic: true }),
+  Matter.Bodies.rectangle(W + WALL_MARGIN, H / 2, WALL_MARGIN * 2, H * 4, { isStatic: true }),
+]);
 
 let activeColours = palette.map((c) => c.id);
 let legIndex = 0;
@@ -182,7 +196,10 @@ function clampSpeeds() {
 }
 
 function recycleStray(now) {
-  const margin = 80;
+  // Well beyond the boundary walls (WALL_MARGIN) — this should now only
+  // ever fire for a ball that tunnels through those walls entirely or one
+  // genuinely flung off the top/bottom, not as routine traffic.
+  const margin = WALL_MARGIN + 100;
   for (const b of balls) {
     if (b.position.x < -margin || b.position.x > W + margin || b.position.y < -margin || b.position.y > H + margin) {
       const p = releasePoint();
@@ -193,12 +210,20 @@ function recycleStray(now) {
 }
 
 function checkStall(now) {
+  // This force was calibrated under the same wrong force-to-velocity
+  // assumption later corrected for the attractor/repulsor fields (Matter's
+  // applyForce is mass-scaled and the real multiplier is far larger than it
+  // looks). At 0.02 this was applying to every ball in play at once and
+  // launching a large fraction of them at extreme, off-screen-in-one-frame
+  // speed — a handful of stall firings account for thousands of the
+  // "balls flung off-canvas" events seen in Level 3 testing. Scaled down
+  // ~30x to a genuine gentle nudge.
   if (balls.length === 0) return;
   if (now - lastCollectionTime > STALL_MS && now - lastJitterTime > STALL_MS) {
     for (const b of balls) {
       Matter.Body.applyForce(b, b.position, {
-        x: (Math.random() - 0.5) * 0.02,
-        y: (Math.random() - 0.5) * 0.02 - 0.008,
+        x: (Math.random() - 0.5) * 0.004,
+        y: (Math.random() - 0.5) * 0.004 - 0.0015,
       });
     }
     lastJitterTime = now;
@@ -282,10 +307,25 @@ function loop(now) {
 
   if (started && !paused && !gameOver) {
     if (spawnQueue.length > 0) spawnBatch();
-    if (currentLevelRuntime) currentLevelRuntime.update(now - legStartTime);
-    applyFields(now);
-    Matter.Engine.update(engine, dt);
-    clampSpeeds();
+    // Sub-step the physics AND the level's own wall movement together.
+    // Moving the walls once per animation frame, then resolving physics
+    // against that single static pose, meant a fast-moving wall (e.g. a
+    // rotating flap) effectively teleported a whole frame's worth of
+    // motion before any collision was resolved at the new position —
+    // Matter would detect a ball deeply overlapping the wall's new pose
+    // and fire off a large corrective impulse, launching it at extreme
+    // speed. Advancing the wall by a fraction of the frame on each substep
+    // keeps its motion — and any resulting collision — proportionally
+    // small everywhere, not just where the physics substeps alone helped.
+    const subDt = dt / PHYSICS_SUBSTEPS;
+    const elapsedBefore = now - legStartTime - dt;
+    for (let s = 1; s <= PHYSICS_SUBSTEPS; s++) {
+      const subElapsed = elapsedBefore + subDt * s;
+      if (currentLevelRuntime) currentLevelRuntime.update(subElapsed);
+      applyFields(now);
+      Matter.Engine.update(engine, subDt);
+      clampSpeeds();
+    }
     checkCollection(now);
     recycleStray(now);
     checkStall(now);
