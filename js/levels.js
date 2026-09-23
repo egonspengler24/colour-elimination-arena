@@ -403,14 +403,18 @@ function buildHexPachinko(Matter, world, W, H) {
 // net (SPEC.md §7) since opposing fields can create near-equilibria.
 
 function buildRepulsorChaos(Matter, world, W, H) {
+  // Feedback: the left-to-right rush toward the collector was too fast and
+  // read as strange. Collector and repulsor strength both cut down, and the
+  // repulsors now drift on a much slower cycle so the scene reads as gentle
+  // churn rather than a frantic dash.
   const collectorX = W * 0.68, collectorY = H * 0.42;
-  const collector = { x: collectorX, y: collectorY, kind: 'attract', strength: 0.0001, radius: Math.hypot(W, H) };
+  const collector = { x: collectorX, y: collectorY, kind: 'attract', strength: 0.000012, radius: Math.hypot(W, H) };
   const repulsors = [
-    { baseX: W * 0.25, baseY: H * 0.3, r: 90, speed: 2600, phase: 0 },
-    { baseX: W * 0.45, baseY: H * 0.55, r: 70, speed: 3100, phase: 1.4 },
-    { baseX: W * 0.62, baseY: H * 0.22, r: 80, speed: 2200, phase: 2.6 },
-    { baseX: W * 0.35, baseY: H * 0.65, r: 100, speed: 3400, phase: 4.0 },
-  ].map((r) => ({ x: r.baseX, y: r.baseY, kind: 'repel', strength: 0.0002, radius: 150, ...r }));
+    { baseX: W * 0.25, baseY: H * 0.3, r: 90, speed: 5200, phase: 0 },
+    { baseX: W * 0.45, baseY: H * 0.55, r: 70, speed: 6200, phase: 1.4 },
+    { baseX: W * 0.62, baseY: H * 0.22, r: 80, speed: 4400, phase: 2.6 },
+    { baseX: W * 0.35, baseY: H * 0.65, r: 100, speed: 6800, phase: 4.0 },
+  ].map((r) => ({ x: r.baseX, y: r.baseY, kind: 'repel', strength: 0.00009, radius: 150, ...r }));
 
   function update(t) {
     for (const f of repulsors) {
@@ -473,6 +477,6 @@ const LEVELS = [
     collection: { type: 'line', y: 0.93 }, build: buildHexPachinko },
 
   { id: 'repulsor-chaos', name: 'Repulsor Chaos', background: '#03040a',
-    gravity: { x: 0, y: 0.25 }, release: { type: 'spread', xMin: 0, xMax: 0.3, y: 0.06 },
-    collection: { type: 'circle', x: 0.68, y: 0.42, r: 0.04 }, build: buildRepulsorChaos },
+    gravity: { x: 0, y: 0.04 }, release: { type: 'spread', xMin: 0, xMax: 0.3, y: 0.06 },
+    collection: { type: 'circle', x: 0.68, y: 0.42, r: 0.06 }, build: buildRepulsorChaos },
 ];
