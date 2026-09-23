@@ -75,7 +75,10 @@ function shuffle(arr) {
 function releasePoint() {
   const r = currentLevel.release;
   if (r.type === 'point') {
-    return { x: r.x * W + (Math.random() - 0.5) * 20, y: r.y * H + (Math.random() - 0.5) * 20 };
+    return {
+      x: r.x * W + (Math.random() - 0.5) * (r.jitterX ?? 20),
+      y: r.y * H + (Math.random() - 0.5) * (r.jitterY ?? 20),
+    };
   }
   const xMin = (r.xMin ?? 0) * W, xMax = (r.xMax ?? 1) * W;
   return { x: xMin + Math.random() * (xMax - xMin), y: r.y * H + Math.random() * H * 0.03 };
@@ -120,7 +123,7 @@ function spawnBatch() {
     const ball = Matter.Bodies.circle(p.x, p.y, BALL_RADIUS, {
       restitution: 0.3,
       friction: 0.02,
-      frictionAir: 0.001,
+      frictionAir: currentLevel.frictionAir ?? 0.001,
       collisionFilter: { group: BALL_GROUP },
     });
     ball.colourId = colourId;

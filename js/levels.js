@@ -252,8 +252,12 @@ function buildSerpentine(Matter, world, W, H) {
 
 function buildVortex(Matter, world, W, H) {
   const cx = W * 0.5, cy = H * 0.5;
-  const field = { x: cx, y: cy, kind: 'attract', strength: 0.00012, radius: Math.hypot(W, H), tangential: 0.00018 };
-  const cycle = 6200, attractFor = 4400;
+  // With real drag on this level (frictionAir in the registry) speed settles
+  // where force balances drag instead of climbing to the safety clamp, so the
+  // inward pull just has to beat the swirl for the spiral to close. The
+  // swirl is deliberately smaller than the pull.
+  const field = { x: cx, y: cy, kind: 'attract', strength: 0.00004, radius: Math.hypot(W, H), tangential: 0.00002 };
+  const cycle = 12000, attractFor = 8500;
   function update(t) {
     field.kind = t % cycle < attractFor ? 'attract' : 'repel';
   }
@@ -489,8 +493,8 @@ const LEVELS = [
     collection: { type: 'line', y: 0.93 }, build: buildSerpentine },
 
   { id: 'vortex-well', name: 'Vortex Well', background: '#03040a',
-    gravity: { x: 0, y: 0 }, release: { type: 'point', x: 0.06, y: 0.5 },
-    collection: { type: 'circle', x: 0.5, y: 0.5, r: 0.045 }, build: buildVortex },
+    gravity: { x: 0, y: 0 }, frictionAir: 0.08, release: { type: 'point', x: 0.05, y: 0.5, jitterX: 60, jitterY: 720 },
+    collection: { type: 'circle', x: 0.5, y: 0.5, r: 0.07 }, build: buildVortex },
 
   { id: 'gravity-wells', name: 'Gravity Wells', background: '#0a0806',
     gravity: { x: 0, y: 0.015 }, release: { type: 'spread', y: 0.04 },
