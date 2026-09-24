@@ -233,14 +233,21 @@ function buildSeeSaws(Matter, world, W, H) {
 
 function buildVortex(Matter, world, W, H) {
   const cx = W * 0.5, cy = H * 0.5;
-  // With real drag on this level (frictionAir in the registry) speed settles
-  // where force balances drag instead of climbing to the safety clamp, so the
-  // inward pull just has to beat the swirl for the spiral to close. The
-  // swirl is deliberately smaller than the pull.
-  const field = { x: cx, y: cy, kind: 'attract', strength: 0.00004, radius: Math.hypot(W, H), tangential: 0.00002 };
-  const cycle = 12000, attractFor = 8500;
+  // Tuned by measurement (see test/harness.js). Balls start spread over the
+  // whole field and spiral in under a weak pull with a stronger swirl, so
+  // arrival at the collector is spread over ~40s (peak ~150 balls/s) instead
+  // of one big stream. The swirl fades out near the centre (innerFade) so
+  // balls reaching the collector aren't flung back out. The repel phase
+  // pushes everything back outward for a few seconds each cycle.
+  const P = {
+    strength: 0.000015, tangential: 0.00004, innerFade: 220, radius: Math.hypot(W, H),
+    cycle: 14000, attractFor: 11000, repelScale: 0.6,
+  };
+  const field = { x: cx, y: cy, kind: 'attract', strength: P.strength, radius: P.radius, tangential: P.tangential, innerFade: P.innerFade };
   function update(t) {
-    field.kind = t % cycle < attractFor ? 'attract' : 'repel';
+    const attract = t % P.cycle < P.attractFor;
+    field.kind = attract ? 'attract' : 'repel';
+    field.strength = attract ? P.strength : P.strength * P.repelScale;
   }
   function draw(ctx) {
     ctx.strokeStyle = field.kind === 'attract' ? 'rgba(90,150,220,0.55)' : 'rgba(230,140,60,0.55)';
@@ -497,7 +504,7 @@ const LEVELS = [
     collection: { type: 'line', y: 0.93 }, build: buildSeeSaws },
 
   { id: 'vortex-well', name: 'Vortex Well', background: '#03040a',
-    gravity: { x: 0, y: 0 }, frictionAir: 0.08, release: { type: 'point', x: 0.05, y: 0.5, jitterX: 60, jitterY: 720 },
+    gravity: { x: 0, y: 0 }, frictionAir: 0.08, release: { type: 'area', xMin: 0.02, xMax: 0.98, yMin: 0.04, yMax: 0.92 },
     collection: { type: 'circle', x: 0.5, y: 0.5, r: 0.07 }, build: buildVortex },
 
   { id: 'gravity-wells', name: 'Gravity Wells', background: '#0a0806',

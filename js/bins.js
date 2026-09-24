@@ -15,10 +15,13 @@ class Bins {
     this.eliminationOrder = [];
     this.completedSeq = {};
     this.seq = 0;
+    this.dirty = new Set();
+    container.replaceChildren();
 
     for (const colour of palette) {
       const el = document.createElement('div');
       el.className = 'bin';
+      el.title = colour.label;
       el.style.setProperty('--bin-colour', colour.ball);
       el.innerHTML = `
         <div class="bin-badge">&#10003;</div>
@@ -44,24 +47,37 @@ class Bins {
       el.querySelector('.bin-count').textContent = '0';
       el.style.order = 0;
     }
+    this.dirty.clear();
     this._reorder(activeIds);
   }
 
+  // Counting is immediate (it decides the leg); the DOM is only touched once
+  // per frame in flush(), because at high game speed hundreds of balls can be
+  // collected between two paints.
   collect(id) {
     if (this.eliminated.has(id)) return;
     this.counts[id] = Math.min(this.allocation, this.counts[id] + 1);
-    const el = this.els[id];
-    const pct = (this.counts[id] / this.allocation) * 100;
-    el.querySelector('.bin-fill').style.height = `${pct}%`;
-    el.querySelector('.bin-count').textContent = String(this.counts[id]);
-    if (this.counts[id] >= this.allocation) {
-      el.classList.add('complete');
-      if (this.completedSeq[id] === undefined) this.completedSeq[id] = ++this.seq;
+    if (this.counts[id] >= this.allocation && this.completedSeq[id] === undefined) {
+      this.completedSeq[id] = ++this.seq;
     }
+    this.dirty.add(id);
+  }
+
+  flush() {
+    if (this.dirty.size === 0) return;
+    for (const id of this.dirty) {
+      const el = this.els[id];
+      const pct = (this.counts[id] / this.allocation) * 100;
+      el.querySelector('.bin-fill').style.height = `${pct}%`;
+      el.querySelector('.bin-count').textContent = String(this.counts[id]);
+      if (this.counts[id] >= this.allocation) el.classList.add('complete');
+    }
+    this.dirty.clear();
     this._reorder(this._activeIds());
   }
 
   eliminate(id) {
+    this.flush();
     this.eliminated.add(id);
     this.eliminationOrder.push(id);
     const el = this.els[id];

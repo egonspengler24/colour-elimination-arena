@@ -4,37 +4,161 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Colour Elimination Arena</title>
-<link rel="stylesheet" href="css/style.css" />
+<link rel="stylesheet" href="css/style.css?v=24" />
 </head>
 <body>
-  <div id="app">
-    <div id="game-frame">
-      <div id="leg-title">LEG 1</div>
-      <canvas id="field" width="1600" height="900"></canvas>
 
-      <div id="start-overlay">
-        <button id="start-btn">Start</button>
+<!-- ============ SETUP ============ -->
+<main id="setup" class="screen">
+  <header class="hero">
+    <h1>Colour Elimination Arena</h1>
+    <p>Pick the colours, name them, choose a soundtrack, and let the balls decide who survives each leg.</p>
+  </header>
+
+  <section aria-labelledby="coloursHeading">
+    <div class="section-head">
+      <h2 id="coloursHeading">Colours in play</h2>
+      <div class="tools">
+        <span id="colourSummary" class="hint"></span>
+        <button type="button" class="ghost" id="selectAll">Select all</button>
+        <button type="button" class="ghost" id="selectNone">Clear</button>
+        <button type="button" class="ghost" id="resetNames">Reset names</button>
       </div>
+    </div>
+    <div id="teamGrid" class="team-grid"></div>
+    <details class="paste">
+      <summary>Paste a list of names instead</summary>
+      <p class="hint">One name per line. They fill the selected colours in order.</p>
+      <textarea id="pasteBox" rows="6" placeholder="Alice&#10;Bob&#10;Carol"></textarea>
+      <button type="button" id="applyPaste">Fill names</button>
+    </details>
+    <p class="hint">Tick a colour to include it. With N colours the game runs N&minus;1 legs; each leg the slowest colour to fill its bin is eliminated. Blank names use the colour name.</p>
+  </section>
 
-      <div id="winner-overlay" class="hidden">
-        <div id="winner-text"></div>
+  <section aria-labelledby="gameHeading">
+    <h2 id="gameHeading">Game settings</h2>
+    <div class="settings-grid">
+      <label class="field">
+        <span>Balls in play</span>
+        <select id="totalBalls" aria-label="Balls in play">
+          <option value="1000">1,000</option>
+          <option value="1500">1,500</option>
+          <option value="2000">2,000</option>
+          <option value="2500" selected>2,500</option>
+          <option value="3000">3,000</option>
+          <option value="4000">4,000</option>
+        </select>
+      </label>
+      <div class="field">
+        <span>Level order</span>
+        <div class="seg" role="group" aria-label="Level order" id="orderSeg">
+          <button type="button" data-order="fixed" class="on">Fixed</button>
+          <button type="button" data-order="shuffled">Shuffled</button>
+        </div>
       </div>
+      <label class="field">
+        <span>Starting speed</span>
+        <select id="startSpeed" aria-label="Starting speed">
+          <option value="1" selected>1&times; (real time)</option>
+          <option value="2">2&times;</option>
+          <option value="4">4&times;</option>
+          <option value="8">8&times; (fast forward)</option>
+        </select>
+      </label>
+    </div>
+    <p class="hint" id="ballNote"></p>
+  </section>
 
-      <div id="controls">
-        <button id="pause-btn" title="Pause">&#10074;&#10074;</button>
-        <button id="fullscreen-btn" title="Fullscreen">&#9974;</button>
+  <section aria-labelledby="musicHeading" class="music">
+    <h2 id="musicHeading">Background music</h2>
+    <div class="music-row">
+      <div class="seg" role="group" aria-label="Music source">
+        <button type="button" id="musicDefault" class="on">Default track</button>
+        <label class="seg-file" id="musicFileLabel"><input type="file" id="musicFile" accept="audio/*"><span>Choose file&hellip;</span></label>
+        <button type="button" id="musicNone">No music</button>
+      </div>
+      <span id="musicName" class="hint"></span>
+    </div>
+    <p class="hint">Your own file stays on your computer; nothing is uploaded.</p>
+    <p class="hint credit">Default track: &ldquo;Keep It Real&rdquo; by Nick Petrov. Music from <a href="https://www.bensound.com" target="_blank" rel="noopener">Bensound.com</a>.</p>
+  </section>
+
+  <div class="start-row">
+    <button type="button" id="startBtn" class="primary">Start game</button>
+  </div>
+
+  <details class="howto">
+    <summary>How it plays</summary>
+    <ul>
+      <li>Every leg has a different level. All the balls, shared equally between the surviving colours, are released at once and travel through it.</li>
+      <li>Balls that reach the <b>green collection zone</b> are counted into the bin of their colour, whichever colour they are. Balls don&rsquo;t collide with each other.</li>
+      <li>A colour&rsquo;s bin is full when it has collected its whole share. The leg ends when all but one colour is full; the one that didn&rsquo;t make it is eliminated.</li>
+      <li>The last colour standing wins. If a leg stalls, the balls are given a gentle shake so the game always finishes.</li>
+    </ul>
+  </details>
+</main>
+
+<!-- ============ GAME ============ -->
+<main id="game" class="screen" hidden>
+  <div id="game-layout">
+    <div id="game-main">
+      <div id="stack">
+        <div id="game-frame">
+          <div id="leg-title">
+            <div id="leg-name">LEG 1</div>
+            <div id="leg-time">00:00</div>
+          </div>
+          <canvas id="field" width="1600" height="900"></canvas>
+
+          <div id="pause-badge" hidden>Paused</div>
+
+          <div id="winner-overlay" class="hidden">
+            <div id="winner-card">
+              <div id="winner-kicker">Winner</div>
+              <div id="winner-text"></div>
+              <div id="winner-sub"></div>
+              <div id="winner-actions">
+                <button type="button" id="again-btn" class="primary">Play again</button>
+                <button type="button" id="edit-btn">Edit setup</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="controls">
+            <button id="pause-btn" title="Pause" aria-label="Pause">&#10074;&#10074;</button>
+            <div class="seg" role="group" aria-label="Game speed" id="speedSeg">
+              <button type="button" data-speed="1">1&times;</button>
+              <button type="button" data-speed="2">2&times;</button>
+              <button type="button" data-speed="4">4&times;</button>
+              <button type="button" data-speed="8">8&times;</button>
+            </div>
+            <button id="mute-btn" title="Mute" aria-label="Mute" aria-pressed="false">&#128266;</button>
+            <input type="range" id="volume" min="0" max="1" step="0.01" value="0.6" aria-label="Music volume">
+            <button id="fullscreen-btn" title="Fullscreen" aria-label="Fullscreen">&#9974;</button>
+            <button id="setup-btn" title="Back to setup" aria-label="Back to setup">&#9881;</button>
+            <span class="clock" title="Game time"><span id="clock">00:00</span></span>
+          </div>
+        </div>
+
+        <div id="bins"></div>
       </div>
     </div>
 
-    <div id="bins"></div>
+    <aside id="leaderboard" aria-label="Leaderboard">
+      <h2>Leaderboard</h2>
+      <ol id="lb-list"></ol>
+      <h2>Legs</h2>
+      <ol id="leg-log"></ol>
+    </aside>
   </div>
+</main>
 
-  <audio id="bg-music" loop></audio>
-
-  <script src="vendor/matter.min.js"></script>
-  <script src="js/palette.js?v=21"></script>
-  <script src="js/bins.js?v=21"></script>
-  <script src="js/levels.js?v=21"></script>
-  <script src="js/game.js?v=21"></script>
+<script src="vendor/matter.min.js"></script>
+<script src="js/palette.js?v=24"></script>
+<script src="js/bins.js?v=24"></script>
+<script src="js/levels.js?v=24"></script>
+<script src="js/music.js?v=24"></script>
+<script src="js/game.js?v=24"></script>
+<script src="js/setup.js?v=24"></script>
 </body>
 </html>
