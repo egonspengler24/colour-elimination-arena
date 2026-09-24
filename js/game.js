@@ -9,6 +9,8 @@ const MAX_BALL_SPEED = 22; // safety clamp: attractor/repulsor fields with littl
                             // damping can otherwise pump velocity without bound
 const MAX_SINGLE_STEP_MS = 25; // frames longer than this get split into several steps
 const MAX_PHYSICS_STEPS = 3;
+const NUDGE_AFTER_MS = 1200;  // a ball this long below NUDGE_SPEED gets a small sideways hop
+const NUDGE_SPEED = 0.12;
 
 const canvas = document.getElementById('field');
 const ctx = canvas.getContext('2d');
@@ -42,8 +44,8 @@ const BALL_GROUP = -1;
 // balls simply bounce back in, and recycling stays a true last resort.
 const WALL_MARGIN = 250;
 Matter.World.add(world, [
-  Matter.Bodies.rectangle(-WALL_MARGIN, H / 2, WALL_MARGIN * 2, H * 4, { isStatic: true }),
-  Matter.Bodies.rectangle(W + WALL_MARGIN, H / 2, WALL_MARGIN * 2, H * 4, { isStatic: true }),
+  Matter.Bodies.rectangle(-WALL_MARGIN, H / 2, WALL_MARGIN * 2, H * 4, { isStatic: true, frictionStatic: 0 }),
+  Matter.Bodies.rectangle(W + WALL_MARGIN, H / 2, WALL_MARGIN * 2, H * 4, { isStatic: true, frictionStatic: 0 }),
 ]);
 
 let activeColours = palette.map((c) => c.id);
@@ -124,6 +126,7 @@ function spawnBatch() {
     const ball = Matter.Bodies.circle(p.x, p.y, BALL_RADIUS, {
       restitution: 0.3,
       friction: 0.02,
+      frictionStatic: 0,
       frictionAir: currentLevel.frictionAir ?? 0.001,
       collisionFilter: { group: BALL_GROUP },
     });
@@ -195,6 +198,27 @@ function clampSpeeds() {
     if (speed > MAX_BALL_SPEED) {
       const s = MAX_BALL_SPEED / speed;
       Matter.Body.setVelocity(b, { x: sx * s, y: sy * s });
+    }
+  }
+}
+
+// Per-ball unstick, opt-in per level (level.nudgeStuck). The global stall
+// jitter only fires when NOTHING is being collected, so a handful of balls
+// wedged on pegs could sit for 100s+ while a trickle of others kept resetting
+// its timer. This nudges just the balls that are actually stuck. Not used on
+// levels where balls are meant to wait (e.g. Leg 1's pillars).
+function nudgeStuckBalls(dt) {
+  if (!currentLevel || !currentLevel.nudgeStuck) return;
+  for (const b of balls) {
+    const v2 = b.velocity.x * b.velocity.x + b.velocity.y * b.velocity.y;
+    if (v2 < NUDGE_SPEED * NUDGE_SPEED) {
+      b.stillMs = (b.stillMs || 0) + dt;
+      if (b.stillMs > NUDGE_AFTER_MS) {
+        Matter.Body.applyForce(b, b.position, { x: (Math.random() - 0.5) * 0.0012, y: -0.0003 });
+        b.stillMs = 0;
+      }
+    } else {
+      b.stillMs = 0;
     }
   }
 }
@@ -333,6 +357,7 @@ function loop(now) {
       Matter.Engine.update(engine, subDt);
       clampSpeeds();
     }
+    nudgeStuckBalls(dt);
     checkCollection(now);
     recycleStray(now);
     checkStall(now);
